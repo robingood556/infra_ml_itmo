@@ -1,0 +1,309 @@
+#command_sql
+
+
+#local table
+
+CREATE TABLE jgorev_370834.users_transactions 
+ON CLUSTER kube_clickhouse_cluster
+(
+    user_id_out Int64,
+    user_id_in Int64,
+    important Int64,
+    amount Float64,
+    datetime DateTime
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(datetime)
+ORDER BY (user_id_out, user_id_in, amount);
+
+#distributed table
+CREATE TABLE jgorev_370834.distributed_users_transactions
+ON CLUSTER kube_clickhouse_cluster AS jgorev_370834.users_transactions
+ENGINE = Distributed(
+	kube_clickhouse_cluster,
+	jgorev_370834,
+	users_transactions,
+	xxHash64(datetime)
+);
+
+
+#avg month
+
+CREATE MATERIALIZED VIEW jgorev_370834.average_amount_by_month
+ON CLUSTER kube_clickhouse_cluster
+ENGINE = AggregatingMergeTree
+ORDER BY (user_id, date) POPULATE AS
+WITH count_in AS (
+    SELECT
+        user_id_in AS user_id,
+        formatDateTime(datetime, '%m-%G') AS date,
+        ROUND(AVG(amount), 2) AS avg_in
+    FROM jgorev_370834.distributed_users_transactions
+    GROUP BY
+        user_id,
+        date
+),
+count_out AS (
+    SELECT
+        user_id_out AS user_id,
+        formatDateTime(datetime, '%m-%G') AS date,
+        ROUND(AVG(amount), 2) AS avg_out
+    FROM jgorev_370834.distributed_users_transactions
+    GROUP BY
+        user_id,
+        date
+)
+SELECT
+    tci.user_id AS user_id,
+    tci.date,
+    avg_in,
+    avg_out
+FROM count_in AS tci
+INNER JOIN count_out AS tco ON (tco.user_id = tci.user_id) AND (tco.date = tci.date)
+ORDER BY 
+    tci.user_id, 
+    date;
+
+
+CREATE TABLE jgorev-370834.distributed_average_amount_by_month
+ON CLUSTER kube_clickhouse_cluster AS
+jgorev_370834.average_amount_by_month
+ENGINE = Distributed(
+    kube_clickhouse_cluster,
+    jgorev_370834, 
+    average_amount_by_month
+);
+
+#avg day
+
+CREATE MATERIALIZED VIEW jgorev_370834.average_amount_by_day
+ON CLUSTER kube_clickhouse_cluster
+ENGINE = AggregatingMergeTree
+ORDER BY (user_id, date) POPULATE AS
+WITH count_in AS (
+    SELECT
+        user_id_in AS user_id,
+        formatDateTime(datetime, '%d-%m-%G') AS date,
+        ROUND(AVG(amount), 2) AS avg_in
+    FROM jgorev_370834.distributed_users_transactions
+    GROUP BY
+        user_id,
+        date
+),
+count_out AS (
+    SELECT
+        user_id_out AS user_id,
+        formatDateTime(datetime, '%d-%m-%G') AS date,
+        ROUND(AVG(amount), 2) AS avg_out
+    FROM jgorev_370834.distributed_users_transactions
+    GROUP BY
+        user_id,
+        date
+)
+SELECT
+    tci.user_id AS user_id,
+    tci.date,
+    avg_in,
+    avg_out
+FROM count_in AS tci
+INNER JOIN count_out AS tco ON (tco.user_id = tci.user_id) AND (tco.date = tci.date)
+ORDER BY 
+    tci.user_id, 
+    date;
+
+
+CREATE TABLE jgorev_370834.distributed_average_amount_by_day 
+ON CLUSTER kube_clickhouse_cluster AS jgorev_370834.average_amount_by_day
+ENGINE = Distributed(
+    kube_clickhouse_cluster,
+    jgorev_370834, 
+    average_amount_by_day
+);
+
+
+#trans by month
+
+CREATE MATERIALIZED VIEW jgorev_370834.important_number_by_month
+ON CLUSTER kube_clickhouse_cluster
+ENGINE = AggregatingMergeTree
+ORDER BY (user_id, date) 
+POPULATE AS WITH count_in AS (
+    SELECT
+        user_id_in AS user_id,
+        formatDateTime(datetime, '%m-%G') AS date,
+        COUNT(amount) AS cnt_in
+    FROM jgorev_370834.distributed_users_transactions
+    WHERE important = 1
+    GROUP BY
+        user_id,
+        date
+),
+count_out AS (
+    SELECT
+        user_id_out AS user_id,
+        formatDateTime(datetime, '%m-%G') AS date,
+        COUNT(amount) AS cnt_out
+    FROM jgorev_370834.distributed_users_transactions
+    WHERE important = 1
+    GROUP BY
+        user_id,
+        date
+)
+SELECT
+    tci.user_id AS user_id,
+    tci.date AS date,
+    cnt_in,
+    cnt_out
+FROM count_in AS tci
+INNER JOIN count_out AS tco ON (tco.user_id = tci.user_id) AND (tco.date = tci.date)
+ORDER BY date;
+
+
+CREATE TABLE jgorev_370834.distributed_important_number_by_month
+ON CLUSTER kube_clickhouse_cluster AS jgorev_370834.important_number_by_month
+ENGINE = Distributed(
+    kube_clickhouse_cluster,
+    jgorev_370834, 
+    important_number_by_month 
+);
+
+#trans by day
+
+CREATE MATERIALIZED VIEW jgorev_370834.important_number_by_day
+ON CLUSTER kube_clickhouse_cluster
+ENGINE = AggregatingMergeTree
+ORDER BY (user_id, date) 
+POPULATE AS WITH
+count_in AS (
+    SELECT
+        user_id_in AS user_id,
+        formatDateTime(datetime, '%d-%m-%G') AS date,
+        COUNT(amount) AS cnt_in
+    FROM jgorev_370834.distributed_users_transactions
+    WHERE important = 1
+    GROUP BY
+        user_id,
+        date
+),
+count_out AS (
+    SELECT
+        user_id_out AS user_id,
+        formatDateTime(datetime, '%d-%m-%G') AS date,
+        COUNT(amount) AS cnt_out
+    FROM jgorev_370834.distributed_users_transactions
+    WHERE important = 1
+    GROUP BY
+        user_id,
+        date
+)
+SELECT
+    tci.user_id AS user_id,
+    tci.date AS date,
+    cnt_in,
+    cnt_out
+FROM count_in AS tci
+INNER JOIN count_out AS tco ON (tco.user_id = tci.user_id) AND (tco.date = tci.date)
+ORDER BY 
+    date;
+
+
+CREATE TABLE jgorev_370834.distributed_important_number_by_day
+ON CLUSTER kube_clickhouse_cluster AS jgorev_370834.important_number_by_day
+ENGINE = Distributed(
+    kube_clickhouse_cluster,
+    jgorev_370834, 
+    important_number_by_day
+);
+
+#sums for incoming and outcoming
+
+CREATE MATERIALIZED VIEW jgorev_370834.sums_io_by_month
+ON CLUSTER kube_clickhouse_cluster
+ENGINE = AggregatingMergeTree
+ORDER BY (user_id, date) POPULATE AS WITH
+count_in AS (
+    SELECT
+        user_id_in AS user_id,
+        formatDateTime(datetime, '%m-%G') AS date,
+        ROUND(SUM(amount), 2) AS sum_in
+    FROM jgorev_370834.distributed_users_transactions
+    GROUP BY
+        user_id,
+        date
+),
+count_out AS (
+    SELECT
+        user_id_out AS user_id,
+        formatDateTime(datetime, '%m-%G') AS date,
+        ROUND(SUM(amount), 2) AS sum_out
+    FROM jgorev_370834.distributed_users_transactions
+    GROUP BY
+        user_id,
+        date
+)
+SELECT
+    tci.user_id AS user_id,
+    tci.date AS date,
+    sum_in,
+    sum_out
+FROM count_in AS tci
+INNER JOIN count_out AS tco ON (tco.user_id = tci.user_id) AND (tco.date = tci.date)
+ORDER BY 
+    user_id, 
+    date;
+
+
+CREATE TABLE jgorev_370834.distributed_sums_io_by_month
+ON CLUSTER kube_clickhouse_cluster AS jgorev_370834.sums_io_by_month
+ENGINE = Distributed(
+    kube_clickhouse_cluster,
+    jgorev_370834, 
+    sums_io_by_month
+);
+
+
+#users saldo
+
+CREATE MATERIALIZED VIEW jgorev_370834.users_saldo 
+ON CLUSTER kube_clickhouse_cluster
+ENGINE = AggregatingMergeTree
+ORDER BY (user_id, date) POPULATE AS
+WITH count_in AS (
+    SELECT
+        user_id_in AS user_id,
+        datetime AS date,
+        ROUND(SUM(amount), 2) AS sum_in
+    FROM jgorev_370834.distributed_users_transactions
+    GROUP BY
+        user_id,
+        date
+),
+count_out AS (
+    SELECT
+        user_id_out AS user_id,
+        datetime AS date,
+        ROUND(SUM(amount), 2) AS sum_out
+    FROM jgorev_370834.distributed_users_transactions
+    GROUP BY
+        user_id,
+        date
+)
+SELECT
+    tci.user_id AS user_id,
+    formatDateTime(tci.date, '%m-%G') AS date,
+    ROUND((sum_in - sum_out),2) as saldo
+FROM count_in AS tci
+INNER JOIN count_out AS tco ON (tco.user_id, tco.date) = (tci.user_id, tci.date)
+ORDER BY 
+    tci.user_id, 
+    date;
+
+
+CREATE TABLE jgorev_370834.distributed_users_saldo 
+ON CLUSTER kube_clickhouse_cluster AS jgorev_370834.users_saldo
+ENGINE = Distributed(
+    kube_clickhouse_cluster,
+    jgorev_370834
+    , 
+    users_saldo
+);
